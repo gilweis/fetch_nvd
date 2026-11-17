@@ -41,6 +41,7 @@ python -m fetch_nvd [options]
 | `--timestamp-file` | `last_run_timestamp.txt` | File storing the timestamp of the last successful run |
 | `--nvd-api-url` | `https://services.nvd.nist.gov/rest/json/cves/2.0` | NVD CVE API endpoint |
 | `--timeout` | `30` | HTTP request timeout in seconds |
+| `--log` | `fetch_nvd.log` | Log file name (appended on each run) |
 
 Example:
 
@@ -49,6 +50,9 @@ fetch-nvd --api-key-file C:\secrets\nvd.txt --output-dir exports --timestamp-fil
 ```
 
 The exit code is `0` on success and `1` on failure (the timestamp is not updated on failure).
+
+Progress and errors are printed to the console and appended, with timestamps, to the log file
+(`fetch_nvd.log` by default; change it with `--log`).
 
 > Note: the NVD API limits a single `lastModStartDate`/`lastModEndDate` range to 120 days.
 

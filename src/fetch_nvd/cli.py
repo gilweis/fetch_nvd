@@ -3,6 +3,7 @@
 import argparse
 import datetime
 import json
+import logging
 import os
 import sys
 import time
@@ -13,9 +14,36 @@ DEFAULT_NVD_API_URL = "https://services.nvd.nist.gov/rest/json/cves/2.0"
 DEFAULT_TIMESTAMP_FILE = "last_run_timestamp.txt"
 DEFAULT_OUTPUT_DIR = "delta_exports"
 DEFAULT_API_KEY_FILE = "api_key.txt"
+DEFAULT_LOG_FILE = "fetch_nvd.log"
 PLACEHOLDER_API_KEY = "YOUR_NVD_API_KEY_HERE"
 RESULTS_PER_PAGE = 2000  # Max allowed by NVD API v2.0 per page
 TIME_FORMAT = "%Y-%m-%dT%H:%M:%S.000"
+
+logger = logging.getLogger("fetch_nvd")
+
+
+def setup_logging(log_file):
+    """Configures logging to both the console and the given log file (appended)."""
+    close_logging()
+    logger.setLevel(logging.INFO)
+    logger.propagate = False
+
+    parent = os.path.dirname(log_file)
+    if parent:
+        os.makedirs(parent, exist_ok=True)
+    file_handler = logging.FileHandler(log_file, mode="a", encoding="utf-8")
+    file_handler.setFormatter(logging.Formatter("%(asctime)s [%(levelname)s] %(message)s"))
+    logger.addHandler(file_handler)
+
+    console_handler = logging.StreamHandler()
+    console_handler.setFormatter(logging.Formatter("%(levelname)s: %(message)s"))
+    logger.addHandler(console_handler)
+
+
+def close_logging():
+    for handler in list(logger.handlers):
+        logger.removeHandler(handler)
+        handler.close()
 
 
 def utc_now():
@@ -79,7 +107,7 @@ def fetch_nvd_delta(
         "resultsPerPage": RESULTS_PER_PAGE,
     }
 
-    print(f"Fetching updates from {start_time} to {end_time}...")
+    logger.info("Fetching updates from %s to %s from %s", start_time, end_time, api_url)
 
     all_vulnerabilities = []
     start_index = 0
@@ -91,16 +119,16 @@ def fetch_nvd_delta(
             response.raise_for_status()
             data = response.json()
         except (requests.exceptions.RequestException, ValueError) as e:
-            print(f"Error fetching data from NVD API: {e}", file=sys.stderr)
+            logger.error("Error fetching data from NVD API: %s", e)
             return False
 
         vulnerabilities = data.get("vulnerabilities", [])
         all_vulnerabilities.extend(vulnerabilities)
 
         total_results = data.get("totalResults", 0)
-        print(
-            f"Retrieved {len(vulnerabilities)} vulnerabilities "
-            f"(Progress: {len(all_vulnerabilities)}/{total_results})"
+        logger.info(
+            "Retrieved %d vulnerabilities (Progress: %d/%d)",
+            len(vulnerabilities), len(all_vulnerabilities), total_results,
         )
 
         if len(all_vulnerabilities) >= total_results or not vulnerabilities:
@@ -110,7 +138,7 @@ def fetch_nvd_delta(
         time.sleep(page_delay)
 
     if not all_vulnerabilities:
-        print("No new or updated CVEs found in this time window.")
+        logger.info("No new or updated CVEs found in this time window.")
         save_current_timestamp(timestamp_file, end_time)
         return True
 
@@ -131,7 +159,7 @@ def fetch_nvd_delta(
     with open(output_path, "w", encoding="utf-8") as f:
         json.dump(payload, f, indent=2, ensure_ascii=False)
 
-    print(f"Successfully generated delta file: {output_path}")
+    logger.info("Successfully generated delta file: %s (%d records)", output_path, len(all_vulnerabilities))
 
     # Update timestamp checkpoint only after successful execution
     save_current_timestamp(timestamp_file, end_time)
@@ -170,21 +198,34 @@ def build_parser():
         default=30,
         help="HTTP request timeout in seconds",
     )
+    parser.add_argument(
+        "--log",
+        default=DEFAULT_LOG_FILE,
+        help="Log file name (appended on each run)",
+    )
     return parser
 
 
 def main(argv=None):
     args = build_parser().parse_args(argv)
-    api_key = read_api_key(args.api_key_file) or os.environ.get("NVD_API_KEY") or None
-    if not api_key:
-        print("Warning: no NVD API key provided; requests will be heavily rate limited.", file=sys.stderr)
-    ok = fetch_nvd_delta(
-        api_url=args.nvd_api_url,
-        timestamp_file=args.timestamp_file,
-        output_dir=args.output_dir,
-        api_key=api_key,
-        timeout=args.timeout,
-    )
+    setup_logging(args.log)
+    try:
+        logger.info("Starting fetch-nvd run")
+        api_key = read_api_key(args.api_key_file) or os.environ.get("NVD_API_KEY") or None
+        if not api_key:
+            logger.warning("No NVD API key provided; requests will be heavily rate limited.")
+        ok = fetch_nvd_delta(
+            api_url=args.nvd_api_url,
+            timestamp_file=args.timestamp_file,
+            output_dir=args.output_dir,
+            api_key=api_key,
+            timeout=args.timeout,
+        )
+    except Exception:
+        logger.exception("Unexpected error")
+        ok = False
+    logger.info("Run finished: %s", "success" if ok else "FAILED")
+    close_logging()
     return 0 if ok else 1
 
 

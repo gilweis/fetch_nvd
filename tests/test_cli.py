@@ -16,6 +16,7 @@ def test_main_uses_named_parameters_and_paginates(tmp_path):
     key_file.write_text("secret\n")
     out_dir = tmp_path / "out"
     ts_file = tmp_path / "state" / "ts.txt"
+    log_file = tmp_path / "logs" / "run.log"
 
     pages = [
         _response({"totalResults": 3, "vulnerabilities": [{"id": 1}, {"id": 2}]}),
@@ -28,6 +29,7 @@ def test_main_uses_named_parameters_and_paginates(tmp_path):
             "--output-dir", str(out_dir),
             "--timestamp-file", str(ts_file),
             "--nvd-api-url", "https://example.test/api",
+            "--log", str(log_file),
         ])
 
     assert rc == 0
@@ -38,6 +40,10 @@ def test_main_uses_named_parameters_and_paginates(tmp_path):
     data = json.loads(files[0].read_text(encoding="utf-8"))
     assert data["export_metadata"]["total_records"] == 3
     assert ts_file.read_text() == data["export_metadata"]["end_time"]
+    log_text = log_file.read_text(encoding="utf-8")
+    assert "Successfully generated delta file" in log_text
+    assert "Run finished: success" in log_text
+    assert "secret" not in log_text
 
 
 def test_failure_does_not_update_timestamp(tmp_path):
